@@ -1,0 +1,14 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    paths:
+        - src/
+        - tests/
+    
+    level: 5
+    
+    ignoreErrors:
+        - '#Call to an undefined static method Illuminate\\Support\\Facades\\Response::superjson\(\)#'
+        - '#Call to an undefined method Illuminate\\Http\\Request::superjson\(\)#'
+        - '#Call to an undefined method Illuminate\\Contracts\\Routing\\ResponseFactory::superjson\(\)#'

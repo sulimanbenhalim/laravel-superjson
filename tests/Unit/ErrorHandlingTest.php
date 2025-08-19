@@ -1,0 +1,169 @@
+<?php
+
+namespace SulimanBenhalim\LaravelSuperJson\Tests\Unit;
+
+use PHPUnit\Framework\Attributes\Test;
+use SulimanBenhalim\LaravelSuperJson\Exceptions\SuperJsonException;
+use SulimanBenhalim\LaravelSuperJson\SuperJson;
+use SulimanBenhalim\LaravelSuperJson\Tests\TestCase;
+
+/**
+ * Error handling and security tests for SuperJSON
+ * Tests exception scenarios, invalid input handling, and security features
+ */
+class ErrorHandlingTest extends TestCase
+{
+    #[Test]
+    public function deserialize_throws_exception_for_invalid_json()
+    {
+        $superJson = new SuperJson;
+
+        $this->expectException(SuperJsonException::class);
+        $this->expectExceptionMessage('Invalid JSON');
+
+        $superJson->deserialize('{"invalid": json}');
+    }
+
+    #[Test]
+    public function deserialize_handles_plain_json_fallback()
+    {
+        $superJson = new SuperJson;
+
+        $plainData = ['key' => 'value', 'number' => 42];
+        $result = $superJson->deserialize($plainData);
+
+        $this->assertEquals($plainData, $result);
+    }
+
+    #[Test]
+    public function deserialize_handles_empty_meta()
+    {
+        $superJson = new SuperJson;
+
+        $input = [
+            'json' => ['test' => 'data'],
+            'meta' => [],
+        ];
+
+        $result = $superJson->deserialize($input);
+
+        $this->assertEquals(['test' => 'data'], $result);
+    }
+
+    #[Test]
+    public function deserialize_handles_missing_meta()
+    {
+        $superJson = new SuperJson;
+
+        $input = [
+            'json' => ['test' => 'data'],
+        ];
+
+        $result = $superJson->deserialize($input);
+
+        $this->assertEquals(['test' => 'data'], $result);
+    }
+
+    #[Test]
+    public function transform_handles_unknown_class_gracefully()
+    {
+        $superJson = new SuperJson;
+
+        $customObject = new class
+        {
+            public $property = 'value';
+        };
+
+        $result = $superJson->serialize($customObject);
+
+        $this->assertArrayHasKey('json', $result);
+        $this->assertArrayHasKey('meta', $result);
+        $this->assertEquals('value', $result['json']['property']);
+    }
+
+    #[Test]
+    public function restore_handles_unknown_transformer_type()
+    {
+        $superJson = new SuperJson;
+
+        $input = [
+            'json' => ['data' => 'test'],
+            'meta' => [
+                'values' => [
+                    'data' => ['UnknownType'],
+                ],
+            ],
+        ];
+
+        $result = $superJson->deserialize($input);
+
+        // Should fallback to original data
+        $this->assertEquals(['data' => 'test'], $result);
+    }
+
+    #[Test]
+    public function restore_handles_nonexistent_class()
+    {
+        $superJson = new SuperJson;
+
+        $input = [
+            'json' => ['prop' => 'value'],
+            'meta' => [
+                'values' => [
+                    '' => ['class:NonExistentClass'],
+                ],
+            ],
+        ];
+
+        // Should throw exception due to security settings
+        $this->expectException(\SulimanBenhalim\LaravelSuperJson\Exceptions\SuperJsonException::class);
+        $this->expectExceptionMessage('Class restoration is disabled for security');
+
+        $superJson->deserialize($input);
+    }
+
+    #[Test]
+    public function serialize_handles_empty_array()
+    {
+        $superJson = new SuperJson;
+
+        $result = $superJson->serialize([]);
+
+        $this->assertEquals(['json' => []], $result);
+        $this->assertArrayNotHasKey('meta', $result);
+    }
+
+    #[Test]
+    public function serialize_handles_null_value()
+    {
+        $superJson = new SuperJson;
+
+        $result = $superJson->serialize(null);
+
+        $this->assertEquals(['json' => null], $result);
+        $this->assertArrayNotHasKey('meta', $result);
+    }
+
+    #[Test]
+    public function serialize_handles_deeply_nested_structures()
+    {
+        $superJson = new SuperJson;
+
+        $deepData = [
+            'level1' => [
+                'level2' => [
+                    'level3' => [
+                        'timestamp' => now(),
+                        'data' => 'value',
+                    ],
+                ],
+            ],
+        ];
+
+        $result = $superJson->serialize($deepData);
+
+        $this->assertArrayHasKey('json', $result);
+        $this->assertArrayHasKey('meta', $result);
+        $this->assertEquals('value', $result['json']['level1']['level2']['level3']['data']);
+    }
+}

@@ -1,0 +1,213 @@
+<?php
+
+namespace SulimanBenhalim\LaravelSuperJson\Tests\Unit;
+
+use Exception;
+use InvalidArgumentException;
+use RuntimeException;
+use SulimanBenhalim\LaravelSuperJson\DataTypes\SerializableError;
+use SulimanBenhalim\LaravelSuperJson\SuperJson;
+use SulimanBenhalim\LaravelSuperJson\Tests\TestCase;
+use SulimanBenhalim\LaravelSuperJson\Transformers\ErrorTransformer;
+
+/**
+ * Error/Exception transformer tests
+ * Tests serialization and deserialization of PHP exceptions and errors
+ */
+class ErrorTransformerTest extends TestCase
+{
+    /** @test */
+    public function can_transform_basic_exception()
+    {
+        $transformer = new ErrorTransformer;
+        $exception = new Exception('Test error message', 500);
+
+        $this->assertTrue($transformer->canTransform($exception));
+
+        $transformed = $transformer->transform($exception);
+
+        $this->assertEquals('Exception', $transformed['name']);
+        $this->assertEquals('Test error message', $transformed['message']);
+        $this->assertEquals(500, $transformed['code']);
+        $this->assertIsString($transformed['file']);
+        $this->assertIsInt($transformed['line']);
+        $this->assertIsArray($transformed['trace']);
+        $this->assertNull($transformed['previous']);
+    }
+
+    /** @test */
+    public function can_transform_exception_with_previous()
+    {
+        $transformer = new ErrorTransformer;
+
+        $previous = new InvalidArgumentException('Previous error', 400);
+        $exception = new RuntimeException('Main error', 500, $previous);
+
+        $transformed = $transformer->transform($exception);
+
+        $this->assertEquals('RuntimeException', $transformed['name']);
+        $this->assertEquals('Main error', $transformed['message']);
+        $this->assertEquals(500, $transformed['code']);
+        $this->assertIsArray($transformed['previous']);
+        $this->assertEquals('InvalidArgumentException', $transformed['previous']['name']);
+        $this->assertEquals('Previous error', $transformed['previous']['message']);
+        $this->assertEquals(400, $transformed['previous']['code']);
+    }
+
+    /** @test */
+    public function can_restore_serializable_error()
+    {
+        $transformer = new ErrorTransformer;
+
+        $data = [
+            'name' => 'Exception',
+            'message' => 'Test message',
+            'code' => 123,
+            'file' => '/path/to/file.php',
+            'line' => 42,
+            'trace' => [
+                ['file' => '/test.php', 'line' => 10, 'function' => 'test', 'class' => '', 'type' => ''],
+            ],
+            'previous' => null,
+        ];
+
+        $restored = $transformer->restore($data);
+
+        $this->assertInstanceOf(SerializableError::class, $restored);
+        $this->assertEquals('Exception', $restored->getName());
+        $this->assertEquals('Test message', $restored->getMessage());
+        $this->assertEquals(123, $restored->getCode());
+        $this->assertEquals('/path/to/file.php', $restored->getFile());
+        $this->assertEquals(42, $restored->getLine());
+        $this->assertCount(1, $restored->getTrace());
+        $this->assertNull($restored->getPrevious());
+    }
+
+    /** @test */
+    public function serializable_error_can_be_converted_to_string()
+    {
+        $error = new SerializableError(
+            'RuntimeException',
+            'Something went wrong',
+            500,
+            '/app/test.php',
+            25
+        );
+
+        $string = $error->toString();
+
+        $this->assertStringContainsString('RuntimeException', $string);
+        $this->assertStringContainsString('Something went wrong', $string);
+        $this->assertStringContainsString('/app/test.php:25', $string);
+    }
+
+    /** @test */
+    public function serializable_error_can_be_converted_to_exception()
+    {
+        $error = new SerializableError(
+            'RuntimeException',
+            'Test error',
+            404,
+            '/test.php',
+            10
+        );
+
+        $exception = $error->toException();
+
+        $this->assertInstanceOf(Exception::class, $exception);
+        $this->assertEquals('Test error', $exception->getMessage());
+        $this->assertEquals(404, $exception->getCode());
+    }
+
+    /** @test */
+    public function full_superjson_serialization_with_exceptions()
+    {
+        $superJson = new SuperJson;
+
+        try {
+            throw new RuntimeException('Test exception for serialization', 500);
+        } catch (Exception $e) {
+            $data = ['error' => $e, 'success' => false];
+
+            $serialized = $superJson->serialize($data);
+            $deserialized = $superJson->deserialize($serialized);
+
+            $this->assertFalse($deserialized['success']);
+            $this->assertInstanceOf(SerializableError::class, $deserialized['error']);
+            $this->assertEquals('Test exception for serialization', $deserialized['error']->getMessage());
+            $this->assertEquals(500, $deserialized['error']->getCode());
+            $this->assertEquals('RuntimeException', $deserialized['error']->getName());
+        }
+    }
+
+    /** @test */
+    public function handles_nested_exceptions()
+    {
+        $superJson = new SuperJson;
+
+        $level3 = new Exception('Level 3 error', 300);
+        $level2 = new RuntimeException('Level 2 error', 200, $level3);
+        $level1 = new InvalidArgumentException('Level 1 error', 100, $level2);
+
+        $serialized = $superJson->serialize(['nested_error' => $level1]);
+        $deserialized = $superJson->deserialize($serialized);
+
+        $error = $deserialized['nested_error'];
+        $this->assertInstanceOf(SerializableError::class, $error);
+        $this->assertEquals('Level 1 error', $error->getMessage());
+        $this->assertEquals('InvalidArgumentException', $error->getName());
+
+        $previous = $error->getPrevious();
+        $this->assertInstanceOf(SerializableError::class, $previous);
+        $this->assertEquals('Level 2 error', $previous->getMessage());
+        $this->assertEquals('RuntimeException', $previous->getName());
+
+        $previousPrevious = $previous->getPrevious();
+        $this->assertInstanceOf(SerializableError::class, $previousPrevious);
+        $this->assertEquals('Level 3 error', $previousPrevious->getMessage());
+        $this->assertEquals('Exception', $previousPrevious->getName());
+    }
+
+    /** @test */
+    public function trace_is_properly_sanitized()
+    {
+        $transformer = new ErrorTransformer;
+        $exception = new Exception('Test');
+
+        $transformed = $transformer->transform($exception);
+
+        // Should have limited trace entries
+        $this->assertLessThanOrEqual(10, count($transformed['trace']));
+
+        // Each trace entry should have expected keys
+        foreach ($transformed['trace'] as $frame) {
+            $this->assertArrayHasKey('file', $frame);
+            $this->assertArrayHasKey('line', $frame);
+            $this->assertArrayHasKey('function', $frame);
+            $this->assertArrayHasKey('class', $frame);
+            $this->assertArrayHasKey('type', $frame);
+        }
+    }
+
+    /** @test */
+    public function handles_string_error_codes()
+    {
+        $transformer = new ErrorTransformer;
+
+        // Create mock data with string code (some exceptions use string codes)
+        $data = [
+            'name' => 'CustomException',
+            'message' => 'Error with string code',
+            'code' => 'INVALID_INPUT',
+            'file' => '/test.php',
+            'line' => 15,
+            'trace' => [],
+            'previous' => null,
+        ];
+
+        $restored = $transformer->restore($data);
+
+        $this->assertEquals('INVALID_INPUT', $restored->getCode());
+        $this->assertIsString($restored->getCode());
+    }
+}

@@ -1,0 +1,172 @@
+<?php
+
+namespace SulimanBenhalim\LaravelSuperJson\Tests\Feature;
+
+use Illuminate\Support\Facades\Route;
+use PHPUnit\Framework\Attributes\Test;
+use SulimanBenhalim\LaravelSuperJson\DataTypes\BigInt;
+use SulimanBenhalim\LaravelSuperJson\Tests\TestCase;
+
+/**
+ * SuperJSON middleware functionality tests
+ * Tests automatic request/response transformation and secure data handling
+ */
+class MiddlewareTest extends TestCase
+{
+    /**
+     * Set up test routes with SuperJSON middleware for request/response handling
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Route that returns SuperJSON data - tests response transformation
+        Route::post('/api/data', function () {
+            return response()->json([
+                'timestamp' => now(),
+                'big_number' => new BigInt('123456789012345678901234567890'),
+                'message' => 'Hello World',
+            ]);
+        })->middleware('superjson');
+
+        // Route that echoes request data - tests secure request data access
+        Route::post('/api/echo', function () {
+            return response()->json([
+                'received' => request()->superjson() ?: request()->all(),
+            ]);
+        })->middleware('superjson');
+    }
+
+    #[Test]
+    public function middleware_transforms_response_with_superjson_accept_header()
+    {
+        $response = $this->postJson('/api/data', [], [
+            'Accept' => 'application/superjson',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertHeader('Content-Type', 'application/superjson');
+
+        $data = $response->json();
+        $this->assertArrayHasKey('json', $data);
+        // Meta key is only present when there are transformable types
+        if (isset($data['meta'])) {
+            $this->assertIsArray($data['meta']);
+        }
+        $this->assertEquals('Hello World', $data['json']['message']);
+    }
+
+    #[Test]
+    public function middleware_preserves_regular_json_with_standard_accept_header()
+    {
+        $response = $this->postJson('/api/data', [], [
+            'Accept' => 'application/json',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertHeader('Content-Type', 'application/json');
+
+        $data = $response->json();
+        $this->assertArrayNotHasKey('meta', $data);
+        $this->assertEquals('Hello World', $data['message']);
+    }
+
+    #[Test]
+    public function middleware_handles_superjson_requests()
+    {
+        $superJsonPayload = [
+            'json' => [
+                'name' => 'Test User',
+                'created_at' => '2023-10-05T12:00:00+00:00',
+            ],
+            'meta' => [
+                'values' => [
+                    'created_at' => ['Date'],
+                ],
+            ],
+        ];
+
+        $response = $this->postJson('/api/echo', $superJsonPayload, [
+            'Content-Type' => 'application/superjson',
+            'Accept' => 'application/json',
+        ]);
+
+        $response->assertStatus(200);
+
+        $received = $response->json('received');
+        $this->assertEquals('Test User', $received['name']);
+        $this->assertNotNull($received['created_at']);
+    }
+
+    #[Test]
+    public function middleware_handles_mixed_content_types()
+    {
+        $response = $this->postJson('/api/data', [], [
+            'Accept' => 'application/json, application/superjson',
+        ]);
+
+        $response->assertStatus(200);
+        // Should prefer superjson when both are accepted
+        $response->assertHeader('Content-Type', 'application/superjson');
+    }
+
+    #[Test]
+    public function middleware_handles_wildcard_accept_header()
+    {
+        $response = $this->postJson('/api/data', [], [
+            'Accept' => '*/*',
+        ]);
+
+        $response->assertStatus(200);
+        // Should default to JSON for wildcard
+        $response->assertHeader('Content-Type', 'application/json');
+    }
+
+    #[Test]
+    public function middleware_handles_no_accept_header()
+    {
+        $response = $this->post('/api/data', [], [
+            'Content-Type' => 'application/json',
+        ]);
+
+        $response->assertStatus(200);
+        // Should default to JSON when no Accept header
+        $response->assertHeader('Content-Type', 'application/json');
+    }
+
+    #[Test]
+    public function middleware_handles_malformed_superjson_request()
+    {
+        $malformedPayload = [
+            'invalid' => 'structure',
+        ];
+
+        $response = $this->postJson('/api/echo', $malformedPayload, [
+            'Content-Type' => 'application/superjson',
+        ]);
+
+        $response->assertStatus(200);
+
+        // Should handle as regular JSON when malformed
+        $received = $response->json('received');
+        $this->assertEquals('structure', $received['invalid']);
+    }
+
+    #[Test]
+    public function middleware_preserves_response_status_codes()
+    {
+        Route::post('/api/error', function () {
+            return response()->json(['error' => 'Not found'], 404);
+        })->middleware('superjson');
+
+        $response = $this->postJson('/api/error', [], [
+            'Accept' => 'application/superjson',
+        ]);
+
+        $response->assertStatus(404);
+        $response->assertHeader('Content-Type', 'application/superjson');
+
+        $data = $response->json();
+        $this->assertEquals('Not found', $data['json']['error']);
+    }
+}

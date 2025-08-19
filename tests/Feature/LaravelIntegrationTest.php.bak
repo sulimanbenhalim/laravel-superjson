@@ -1,0 +1,111 @@
+<?php
+
+namespace SulimanBenhalim\LaravelSuperJson\Tests\Feature;
+
+use Illuminate\Support\Facades\Route;
+use SulimanBenhalim\LaravelSuperJson\DataTypes\BigInt;
+use SulimanBenhalim\LaravelSuperJson\Tests\TestCase;
+
+/**
+ * Laravel framework integration tests
+ * Tests SuperJSON macros, middleware, and Blade directives in Laravel context
+ */
+class LaravelIntegrationTest extends TestCase
+{
+    /**
+     * Set up test routes for integration testing
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Set up test routes with SuperJSON response macro and middleware
+        Route::post('/test-superjson', function () {
+            return response()->superjson([
+                'timestamp' => now(),
+                'big_number' => new BigInt('99999999999999999999'),
+            ]);
+        })->middleware('superjson');
+
+        // Route to test secure request data access via attributes
+        Route::post('/test-request', function () {
+            return response()->json([
+                'received' => request()->superjson(),
+            ]);
+        })->middleware('superjson');
+    }
+
+    /** @test */
+    public function response_macro_works()
+    {
+        $response = $this->postJson('/test-superjson');
+
+        $response->assertStatus(200);
+        $response->assertHeader('Content-Type', 'application/superjson');
+
+        $data = $response->json();
+
+        $this->assertArrayHasKey('json', $data);
+        $this->assertArrayHasKey('meta', $data);
+        $this->assertArrayHasKey('timestamp', $data['json']);
+        $this->assertArrayHasKey('big_number', $data['json']);
+    }
+
+    /** @test */
+    public function request_macro_works()
+    {
+        $superJsonData = [
+            'json' => [
+                'name' => 'Test',
+                'created' => '2023-10-05T12:00:00+00:00',
+            ],
+            'meta' => [
+                'values' => [
+                    'created' => ['Date'],
+                ],
+            ],
+        ];
+
+        $response = $this->postJson('/test-request', $superJsonData, [
+            'Content-Type' => 'application/superjson',
+        ]);
+
+        $response->assertStatus(200);
+
+        $received = $response->json('received');
+
+        $this->assertEquals('Test', $received['name']);
+        $this->assertNotNull($received['created']);
+    }
+
+    /** @test */
+    public function middleware_auto_transforms_responses()
+    {
+        $response = $this->postJson('/test-superjson', [], [
+            'Accept' => 'application/superjson',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertHeader('Content-Type', 'application/superjson');
+
+        $data = $response->json();
+
+        $this->assertArrayHasKey('json', $data);
+        $this->assertArrayHasKey('meta', $data);
+    }
+
+    /** @test */
+    public function blade_directive_renders_correctly()
+    {
+        // Create a simple blade view for testing
+        $bladeContent = '<script>const data = @superjson($data);</script>';
+
+        // Mock the blade compilation
+        $data = ['timestamp' => now()];
+        $html = app('superjson')->toHtml($data);
+
+        // Check for HTML-escaped JSON
+        $this->assertStringContainsString('&quot;json&quot;:', $html);
+        $this->assertStringContainsString('&quot;meta&quot;:', $html);
+    }
+}

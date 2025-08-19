@@ -1,0 +1,233 @@
+<?php
+
+namespace SulimanBenhalim\LaravelSuperJson\Tests\Unit;
+
+use SulimanBenhalim\LaravelSuperJson\DataTypes\BigInt;
+use SulimanBenhalim\LaravelSuperJson\DataTypes\SerializableRegex;
+use SulimanBenhalim\LaravelSuperJson\DataTypes\SerializableUrl;
+use SulimanBenhalim\LaravelSuperJson\DataTypes\SuperMap;
+use SulimanBenhalim\LaravelSuperJson\DataTypes\SuperSet;
+use SulimanBenhalim\LaravelSuperJson\SuperJson;
+use SulimanBenhalim\LaravelSuperJson\Tests\TestCase;
+
+/**
+ * Complex data structure serialization tests
+ * Tests nested structures, all data types together, edge cases, and security limits
+ */
+class ComplexDataTest extends TestCase
+{
+    /** @test */
+    public function serializes_and_deserializes_complex_nested_structure()
+    {
+        $superJson = new SuperJson;
+
+        $complexData = [
+            'user' => [
+                'id' => new BigInt('999999999999999999999'),
+                'name' => 'John Doe',
+                'created_at' => now(),
+                'preferences' => [
+                    'theme' => 'dark',
+                    'notifications' => true,
+                    'tags' => new SuperSet(['php', 'laravel', 'javascript']),
+                ],
+            ],
+            'metadata' => [
+                'urls' => [
+                    'homepage' => new SerializableUrl('https://example.com'),
+                    'api' => new SerializableUrl('https://api.example.com/v1'),
+                ],
+                'patterns' => [
+                    'email' => new SerializableRegex('^[^\s@]+@[^\s@]+\.[^\s@]+$', 'i'),
+                    'phone' => new SerializableRegex('^\d{3}-\d{3}-\d{4}$'),
+                ],
+            ],
+            'mapping' => new SuperMap([
+                ['key1', 'value1'],
+                ['key2', ['nested' => 'data']],
+                [42, 'numeric key'],
+            ]),
+        ];
+
+        $serialized = $superJson->serialize($complexData);
+        $deserialized = $superJson->deserialize($serialized);
+
+        // Test basic structure
+        $this->assertEquals('John Doe', $deserialized['user']['name']);
+        $this->assertTrue($deserialized['user']['preferences']['notifications']);
+
+        // Test BigInt restoration
+        $this->assertInstanceOf(BigInt::class, $deserialized['user']['id']);
+        $this->assertEquals('999999999999999999999', $deserialized['user']['id']->toString());
+
+        // Test DateTime restoration
+        $this->assertInstanceOf(\DateTime::class, $deserialized['user']['created_at']);
+
+        // Test SuperSet restoration
+        $this->assertInstanceOf(SuperSet::class, $deserialized['user']['preferences']['tags']);
+        $this->assertTrue($deserialized['user']['preferences']['tags']->has('php'));
+        $this->assertEquals(3, count($deserialized['user']['preferences']['tags']));
+
+        // Test SerializableUrl restoration
+        $this->assertInstanceOf(SerializableUrl::class, $deserialized['metadata']['urls']['homepage']);
+        $this->assertEquals('https://example.com', $deserialized['metadata']['urls']['homepage']->toString());
+
+        // Test SerializableRegex restoration
+        $this->assertInstanceOf(SerializableRegex::class, $deserialized['metadata']['patterns']['email']);
+        $this->assertEquals('/^[^\s@]+@[^\s@]+\.[^\s@]+$/i', $deserialized['metadata']['patterns']['email']->toString());
+
+        // Test SuperMap restoration
+        $this->assertInstanceOf(SuperMap::class, $deserialized['mapping']);
+        $this->assertEquals('value1', $deserialized['mapping']->get('key1'));
+        $this->assertEquals(['nested' => 'data'], $deserialized['mapping']->get('key2'));
+        $this->assertEquals('numeric key', $deserialized['mapping']->get(42));
+    }
+
+    /** @test */
+    public function handles_large_data_structures()
+    {
+        $superJson = new SuperJson;
+
+        // Create a large but non-circular structure
+        $largeData = [];
+        for ($i = 0; $i < 100; $i++) {
+            $largeData["item_$i"] = [
+                'id' => $i,
+                'name' => "Item $i",
+                'timestamp' => now(),
+                'active' => $i % 2 === 0,
+            ];
+        }
+
+        $serialized = $superJson->serialize($largeData);
+        $deserialized = $superJson->deserialize($serialized);
+
+        $this->assertArrayHasKey('json', $serialized);
+        $this->assertEquals(100, count($deserialized));
+        $this->assertEquals('Item 50', $deserialized['item_50']['name']);
+        $this->assertInstanceOf(\DateTime::class, $deserialized['item_50']['timestamp']);
+    }
+
+    /** @test */
+    public function handles_arrays_with_mixed_keys()
+    {
+        $superJson = new SuperJson;
+
+        $mixedArray = [
+            0 => 'first',
+            'string_key' => 'second',
+            2 => 'third',
+            'another_string' => now(),
+        ];
+
+        $serialized = $superJson->serialize($mixedArray);
+        $deserialized = $superJson->deserialize($serialized);
+
+        $this->assertEquals('first', $deserialized[0]);
+        $this->assertEquals('second', $deserialized['string_key']);
+        $this->assertEquals('third', $deserialized[2]);
+        $this->assertInstanceOf(\DateTime::class, $deserialized['another_string']);
+    }
+
+    /** @test */
+    public function preserves_numeric_precision_with_bigint()
+    {
+        $superJson = new SuperJson;
+
+        $precisionData = [
+            'small_int' => 42,
+            'large_int' => new BigInt('12345678901234567890123456789012345678901234567890'),
+            'negative_big' => new BigInt('-99999999999999999999999999999999999999999999999999'),
+            'zero_big' => new BigInt('0'),
+        ];
+
+        $serialized = $superJson->serialize($precisionData);
+        $deserialized = $superJson->deserialize($serialized);
+
+        $this->assertEquals(42, $deserialized['small_int']);
+        $this->assertEquals('12345678901234567890123456789012345678901234567890', $deserialized['large_int']->toString());
+        $this->assertEquals('-99999999999999999999999999999999999999999999999999', $deserialized['negative_big']->toString());
+        $this->assertEquals('0', $deserialized['zero_big']->toString());
+    }
+
+    /** @test */
+    public function handles_empty_collections()
+    {
+        $superJson = new SuperJson;
+
+        $data = [
+            'empty_set' => new SuperSet([]),
+            'empty_map' => new SuperMap([]),
+            'empty_array' => [],
+            'empty_object' => new \stdClass,
+        ];
+
+        $serialized = $superJson->serialize($data);
+        $deserialized = $superJson->deserialize($serialized);
+
+        $this->assertInstanceOf(SuperSet::class, $deserialized['empty_set']);
+        $this->assertEquals(0, count($deserialized['empty_set']));
+
+        $this->assertInstanceOf(SuperMap::class, $deserialized['empty_map']);
+        $this->assertEquals(0, count($deserialized['empty_map']));
+
+        $this->assertEquals([], $deserialized['empty_array']);
+        $this->assertInstanceOf(\stdClass::class, $deserialized['empty_object']);
+    }
+
+    /** @test */
+    public function handles_unicode_and_special_characters()
+    {
+        $superJson = new SuperJson;
+
+        $unicodeData = [
+            'emoji' => '🚀 Laravel SuperJSON 🎉',
+            'chinese' => '你好世界',
+            'arabic' => 'مرحبا بالعالم',
+            'special_chars' => "Line 1\nLine 2\tTabbed\r\nWindows line",
+            'json_chars' => '{"quotes": "test", "backslash": "\\"}',
+            'url_with_unicode' => new SerializableUrl('https://example.com/path/test?param=value'),
+        ];
+
+        $serialized = $superJson->serialize($unicodeData);
+        $deserialized = $superJson->deserialize($serialized);
+
+        $this->assertEquals('🚀 Laravel SuperJSON 🎉', $deserialized['emoji']);
+        $this->assertEquals('你好世界', $deserialized['chinese']);
+        $this->assertEquals('مرحبا بالعالم', $deserialized['arabic']);
+        $this->assertEquals("Line 1\nLine 2\tTabbed\r\nWindows line", $deserialized['special_chars']);
+        $this->assertEquals('{"quotes": "test", "backslash": "\\"}', $deserialized['json_chars']);
+        $this->assertEquals('https://example.com/path/test?param=value', $deserialized['url_with_unicode']->toString());
+    }
+
+    /** @test */
+    public function handles_very_deep_nesting()
+    {
+        // Use higher limits for this test
+        config(['superjson.security.max_depth' => 50]);
+        $superJson = new SuperJson;
+
+        // Create a 5-level deep structure (well within security limit of 10)
+        $deepData = [];
+        $current = &$deepData;
+        for ($i = 0; $i < 5; $i++) {
+            $current['level_'.$i] = [
+                'data' => "Level $i data",
+                'timestamp' => now(),
+                'next' => [],
+            ];
+            $current = &$current['level_'.$i]['next'];
+        }
+
+        $serialized = $superJson->serialize($deepData);
+        $deserialized = $superJson->deserialize($serialized);
+
+        // Verify we can access the deepest level
+        $deepestLevel = $deserialized;
+        for ($i = 0; $i < 5; $i++) {
+            $this->assertEquals("Level $i data", $deepestLevel['level_'.$i]['data']);
+            $this->assertInstanceOf(\DateTime::class, $deepestLevel['level_'.$i]['timestamp']);
+            $deepestLevel = $deepestLevel['level_'.$i]['next'];
+        }
+    }
+}
