@@ -1,6 +1,6 @@
 {
     "name": "sulimanbenhalim/laravel-superjson",
-    "version": "0.9.0-beta",
+    "version": "0.9.1-beta",
     "description": "SuperJSON format for Laravel - preserve JavaScript types in JSON (Beta: CSRF limitations)",
     "type": "library",
     "keywords": [
@@ -13,7 +13,7 @@
     "authors": [
         {
             "name": "Suliman Benhalim",
-            "email": "sulimanbenhalim@gmail.com",
+            "email": "soliman.benhalim@gmail.com",
             "role": "Developer"
         }
     ],

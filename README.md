@@ -266,7 +266,7 @@ composer test
 
 ## Security
 
-If you discover any security issues, please email sulimanbenhalim@gmail.com instead of using the issue tracker.
+If you discover any security issues, please email soliman.benhalim@gmail.com instead of using the issue tracker.
 
 ## License
 
